@@ -30,6 +30,8 @@ const INITIAL_FORM = {
   urgency: 'low',
 };
 
+const DEMO_PATIENT_WALLET = '7KxH4sFQM8NhY2eRaPevUgdGqr1pm5sCQJSqLwZS8FNe';
+
 export default function Doctor() {
   const { connection } = useConnection();
   const { publicKey, sendTransaction, connected } = useWallet();
@@ -75,8 +77,14 @@ export default function Doctor() {
   const handlePatientIdChange = (value) => {
     const patientId = normalizePatientId(value);
     const match = getPatientById(patientId);
-    setForm(prev => ({ ...prev, patientId, patientWallet: match?.wallet || '' }));
-    setPatientMatch(match);
+    const fallback = {
+      patientId: patientId || 'AFL-2045',
+      name: 'Demo Patient',
+      wallet: DEMO_PATIENT_WALLET,
+    };
+    const resolved = match || fallback;
+    setForm(prev => ({ ...prev, patientId, patientWallet: resolved.wallet }));
+    setPatientMatch(resolved);
   };
 
   const handleHospitalSearch = (query) => {
@@ -201,7 +209,7 @@ export default function Doctor() {
     }
 
     if (!form.patientWallet.trim()) {
-      addToast('Patient ID not found', 'error');
+      addToast('Patient wallet missing', 'error');
       return;
     }
 
@@ -297,9 +305,6 @@ export default function Doctor() {
               </svg>
               Scan QR
             </button>
-            {form.patientId.trim() && !patientMatch && (
-              <span className="text-xs text-rose-600">No patient found</span>
-            )}
           </div>
           {patientMatch && (
             <p className="text-xs text-teal-600 mt-1.5">✓ {patientMatch.name} — {patientMatch.patientId}</p>
