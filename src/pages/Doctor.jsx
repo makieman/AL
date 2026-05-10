@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import UrgencyBadge from '../components/UrgencyBadge';
 import Spinner from '../components/Spinner';
 import { useToast } from '../components/Toast';
 import { createReferral } from '../lib/solana';
-import { getReferrals, saveReferral } from '../lib/storage';
+import { getPatientById, getReferrals, saveReferral } from '../lib/storage';
 import { summariseNotes } from '../lib/summarise';
 import { HOSPITALS, searchHospitals } from '../lib/hospitals';
 
@@ -22,6 +22,7 @@ function formatTimestamp(ts) {
 }
 
 const INITIAL_FORM = {
+  patientId: '',
   patientWallet: '',
   fromFacility: '',
   toFacilityId: '',
@@ -43,6 +44,12 @@ export default function Doctor() {
   const [hospitalSearch, setHospitalSearch] = useState('');
   const [showHospitalDropdown, setShowHospitalDropdown] = useState(false);
   const [filteredHospitals, setFilteredHospitals] = useState(HOSPITALS);
+  const [patientMatch, setPatientMatch] = useState(null);
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanError, setScanError] = useState('');
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const scanningRef = useRef(false);
 
   const loadHistory = useCallback(() => {
     if (!publicKey) return;
@@ -57,6 +64,19 @@ export default function Doctor() {
 
   const handleChange = (e) => {
     setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
+  };
+
+  const normalizePatientId = (value) => {
+    const trimmed = value.trim();
+    const match = trimmed.match(/AFL-\d{4}/i);
+    return (match ? match[0] : trimmed).toUpperCase();
+  };
+
+  const handlePatientIdChange = (value) => {
+    const patientId = normalizePatientId(value);
+    const match = getPatientById(patientId);
+    setForm(prev => ({ ...prev, patientId, patientWallet: match?.wallet || '' }));
+    setPatientMatch(match);
   };
 
   const handleHospitalSearch = (query) => {
@@ -74,6 +94,77 @@ export default function Doctor() {
   };
 
   const selectedHospital = HOSPITALS.find(h => h.id === form.toFacilityId);
+
+  const stopScan = () => {
+    scanningRef.current = false;
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  };
+
+  const startScan = async () => {
+    setScanError('');
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setScanError('Camera not available in this browser.');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+
+      if (!('BarcodeDetector' in window)) {
+        setScanError('QR scanning not supported in this browser.');
+        stopScan();
+        return;
+      }
+
+      const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+      scanningRef.current = true;
+
+      const scanFrame = async () => {
+        if (!scanningRef.current || !videoRef.current) return;
+        try {
+          const barcodes = await detector.detect(videoRef.current);
+          if (barcodes.length > 0) {
+            const raw = barcodes[0].rawValue || '';
+            handlePatientIdChange(raw);
+            setScanOpen(false);
+            stopScan();
+            return;
+          }
+        } catch {
+          setScanError('QR scanning failed. Try manual entry.');
+          stopScan();
+          return;
+        }
+        requestAnimationFrame(scanFrame);
+      };
+
+      requestAnimationFrame(scanFrame);
+    } catch {
+      setScanError('Camera access was blocked.');
+      stopScan();
+    }
+  };
+
+  useEffect(() => {
+    if (scanOpen) {
+      startScan();
+    } else {
+      stopScan();
+    }
+
+    return () => stopScan();
+  }, [scanOpen]);
 
   const handleSummarise = async () => {
     if (!form.notes.trim()) {
@@ -104,8 +195,18 @@ export default function Doctor() {
       return;
     }
 
+    if (!form.patientId.trim()) {
+      addToast('Enter a patient ID', 'error');
+      return;
+    }
+
+    if (!form.patientWallet.trim()) {
+      addToast('Patient ID not found', 'error');
+      return;
+    }
+
     // Validate all fields except toFacilityWallet
-    if (!form.patientWallet.trim() || !form.fromFacility.trim() || !form.notes.trim()) {
+    if (!form.fromFacility.trim() || !form.notes.trim()) {
       addToast('Please fill in all fields', 'error');
       return;
     }
@@ -134,6 +235,7 @@ export default function Doctor() {
       saveReferral(referral);
       setSuccess(signature);
       setForm(INITIAL_FORM);
+      setPatientMatch(null);
       setHospitalSearch('');
       loadHistory();
       addToast('Referral created on Solana', 'success');
@@ -174,15 +276,34 @@ export default function Doctor() {
       {/* Form */}
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Patient Wallet Address</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Patient ID</label>
           <input
-            name="patientWallet"
-            value={form.patientWallet}
-            onChange={handleChange}
-            placeholder="Patient's Solana wallet address"
+            name="patientId"
+            value={form.patientId}
+            onChange={(e) => handlePatientIdChange(e.target.value)}
+            placeholder="e.g. AFL-2045"
             className="w-full px-4 py-3 rounded-xl border border-gray-300 text-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition"
             disabled={!connected}
           />
+          <div className="mt-2 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setScanOpen(true)}
+              disabled={!connected}
+              className="inline-flex items-center gap-2 text-xs text-teal-700 hover:text-teal-800 font-medium"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 7.5V6.75A2.25 2.25 0 0 1 6.75 4.5h.75m9.75 0h.75A2.25 2.25 0 0 1 20.25 6.75v.75m0 9.75v.75A2.25 2.25 0 0 1 18 20.25h-.75m-9.75 0h-.75A2.25 2.25 0 0 1 3.75 18v-.75M7.5 12h9" />
+              </svg>
+              Scan QR
+            </button>
+            {form.patientId.trim() && !patientMatch && (
+              <span className="text-xs text-rose-600">No patient found</span>
+            )}
+          </div>
+          {patientMatch && (
+            <p className="text-xs text-teal-600 mt-1.5">✓ {patientMatch.name} — {patientMatch.patientId}</p>
+          )}
         </div>
 
         <div>
@@ -282,6 +403,30 @@ export default function Doctor() {
           {submitting ? <><Spinner size="w-4 h-4" /> Creating on Solana...</> : 'Create Referral on Solana'}
         </button>
       </form>
+
+      {scanOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-900">Scan Patient QR</h3>
+              <button
+                type="button"
+                onClick={() => setScanOpen(false)}
+                className="text-sm text-gray-500 hover:text-gray-700"
+              >
+                Close
+              </button>
+            </div>
+            <div className="rounded-xl overflow-hidden bg-gray-900">
+              <video ref={videoRef} className="w-full h-64 object-cover" muted playsInline />
+            </div>
+            {scanError && (
+              <p className="text-xs text-rose-600 mt-3">{scanError}</p>
+            )}
+            <p className="text-xs text-gray-500 mt-2">Point the camera at the QR code</p>
+          </div>
+        </div>
+      )}
 
       {/* Success card */}
       {success && (

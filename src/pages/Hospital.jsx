@@ -6,6 +6,53 @@ import StatusBadge from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
 import { getReferrals, updateReferral } from '../lib/storage';
 
+const MOCK_HOSPITAL_REFERRALS = [
+  {
+    referralId: 'AFL-REF-001',
+    patientWallet: 'AFL-2045',
+    doctorWallet: 'Dtvs7mD3mQz5KfD9J9mQxC6gK2X7mD3bq8TjQ7mD3mQz',
+    fromFacility: 'Nairobi West Hospital',
+    toFacility: 'Aga Khan Hospital',
+    toFacilityWallet: 'HN7cABqLq46Es1jh92dQQisAi5YqpGj1RRdbzmH2dgHY',
+    notes: 'Chronic cough, night sweats. Needs pulmonary review.',
+    urgency: 'medium',
+    timestamp: new Date('2026-05-10T05:45:00Z').getTime(),
+    status: 'pending',
+    app: 'afyalink',
+    isMock: true,
+  },
+  {
+    referralId: 'AFL-REF-002',
+    patientWallet: 'AFL-1823',
+    doctorWallet: '4K9nR3a7kN5p2J9wQ1f7mD3bq8TjQ7mD3mQz9L2nP1',
+    fromFacility: 'Kenyatta National Hospital',
+    toFacility: 'Aga Khan Hospital',
+    toFacilityWallet: 'HN7cABqLq46Es1jh92dQQisAi5YqpGj1RRdbzmH2dgHY',
+    notes: 'Post-op follow up, routine check.',
+    urgency: 'low',
+    timestamp: new Date('2026-05-10T04:12:00Z').getTime(),
+    status: 'paid',
+    paymentTx: '2bYe9vxJGxMQPqJkN8rSfTnBcdRwX3NkLy2BgqVmJ7fVz8PxCAHnR6Nv4LqvKXGy3kSj9TqAeL5D8wrEFHmM7wnV',
+    app: 'afyalink',
+    isMock: true,
+  },
+  {
+    referralId: 'AFL-REF-003',
+    patientWallet: 'AFL-3301',
+    doctorWallet: '9L3mD7pQ2kT6nR1a8bJ5f7mD3bq8TjQ7mD3mQz9L2nP1',
+    fromFacility: 'MP Shah Hospital',
+    toFacility: 'Aga Khan Hospital',
+    toFacilityWallet: 'HN7cABqLq46Es1jh92dQQisAi5YqpGj1RRdbzmH2dgHY',
+    notes: 'Cardiology consultation requested.',
+    urgency: 'urgent',
+    timestamp: new Date('2026-05-09T12:30:00Z').getTime(),
+    status: 'paid',
+    paymentTx: '4Yr7kLasnMQpJ8dVwFexN3BhVXjCQ8Dz6kqJM7KYnW2G5fNhTbxRs9PvYeArmL3U4QcW6dZXSHf8FGKz7djRT1A',
+    app: 'afyalink',
+    isMock: true,
+  },
+];
+
 function truncate(addr) {
   if (!addr || addr.length < 10) return addr || '';
   return `${addr.slice(0, 4)}...${addr.slice(-4)}`;
@@ -24,6 +71,7 @@ export default function Hospital() {
   const [hospitalWallet, setHospitalWallet] = useState('');
   const [referrals, setReferrals] = useState([]);
   const [stats, setStats] = useState({ total: 0, paid: 0, pending: 0, totalRevenue: 0 });
+  const [usingMock, setUsingMock] = useState(false);
 
   const loadReferrals = useCallback(() => {
     const wallet = hospitalWallet.trim() || publicKey?.toBase58();
@@ -31,14 +79,17 @@ export default function Hospital() {
 
     const all = getReferrals();
     const incoming = all.filter(r => r.toFacilityWallet === wallet);
-    setReferrals(incoming.sort((a, b) => b.timestamp - a.timestamp));
+    const shouldMock = incoming.length === 0;
+    const visibleReferrals = shouldMock ? MOCK_HOSPITAL_REFERRALS : incoming;
+    setUsingMock(shouldMock);
+    setReferrals(visibleReferrals.sort((a, b) => b.timestamp - a.timestamp));
 
-    const paid = incoming.filter(r => r.status === 'paid').length;
-    const pending = incoming.filter(r => r.status === 'pending').length;
-    const totalRevenue = paid * 0.1;
+    const paid = visibleReferrals.filter(r => r.status === 'paid').length;
+    const pending = visibleReferrals.filter(r => r.status === 'pending').length;
+    const totalRevenue = shouldMock ? 2.45 : paid * 0.1;
 
     setStats({
-      total: incoming.length,
+      total: visibleReferrals.length,
       paid,
       pending,
       totalRevenue: totalRevenue.toFixed(2),
@@ -49,7 +100,9 @@ export default function Hospital() {
     loadReferrals();
   }, [loadReferrals]);
 
-  const handleMarkPaid = (referralId) => {
+  const handleMarkPaid = (referral) => {
+    if (referral.isMock) return;
+    const referralId = referral.referralId;
     updateReferral(referralId, { status: 'paid' });
     loadReferrals();
     addToast('Referral marked as paid', 'success');
@@ -126,6 +179,11 @@ export default function Hospital() {
               <p className="text-2xl font-bold text-teal-600">{stats.totalRevenue}</p>
             </div>
           </div>
+          {usingMock && (
+            <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5">
+              <p className="text-xs text-amber-800 font-medium">Showing demo referrals — no on-chain data found yet.</p>
+            </div>
+          )}
 
           {/* Referrals table */}
           {referrals.length === 0 ? (
@@ -185,14 +243,19 @@ export default function Hospital() {
                       >
                         Copy
                       </button>
-                      <a
-                        href={`https://explorer.solana.com/tx/${ref.referralId}?cluster=devnet`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-indigo-600 hover:underline"
-                      >
-                        View Referral →
-                      </a>
+                      {!ref.isMock && (
+                        <a
+                          href={`https://explorer.solana.com/tx/${ref.referralId}?cluster=devnet`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-indigo-600 hover:underline"
+                        >
+                          View Referral →
+                        </a>
+                      )}
+                      {ref.isMock && (
+                        <span className="text-xs text-gray-400">Demo entry</span>
+                      )}
                     </div>
 
                     {/* Payment section */}
@@ -200,24 +263,30 @@ export default function Hospital() {
                       {ref.status === 'paid' && ref.paymentTx ? (
                         <div>
                           <p className="text-xs text-gray-500 font-medium uppercase mb-1">Payment Received</p>
-                          <a
-                            href={`https://explorer.solana.com/tx/${ref.paymentTx}?cluster=devnet`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block text-xs text-emerald-600 hover:underline break-all"
-                          >
-                            View Payment Transaction →
-                          </a>
+                          {!ref.isMock && (
+                            <a
+                              href={`https://explorer.solana.com/tx/${ref.paymentTx}?cluster=devnet`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block text-xs text-emerald-600 hover:underline break-all"
+                            >
+                              View Payment Transaction →
+                            </a>
+                          )}
+                          {ref.isMock && (
+                            <span className="text-xs text-emerald-700">Payment confirmed (demo)</span>
+                          )}
                         </div>
                       ) : ref.status === 'pending' ? (
                         <div>
                           <p className="text-xs text-gray-500 font-medium uppercase mb-2">Payment Pending</p>
                           <div className="flex gap-2">
                             <button
-                              onClick={() => handleMarkPaid(ref.referralId)}
-                              className="flex-1 px-3 py-2 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-medium hover:bg-emerald-100 transition"
+                              onClick={() => handleMarkPaid(ref)}
+                              disabled={ref.isMock}
+                              className="flex-1 px-3 py-2 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-medium hover:bg-emerald-100 transition disabled:opacity-50"
                             >
-                              Mark as Paid
+                              {ref.isMock ? 'Demo only' : 'Mark as Paid'}
                             </button>
                             <span className="text-xs text-gray-500 py-2">0.1 SOL</span>
                           </div>

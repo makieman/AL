@@ -7,6 +7,22 @@ import { useToast } from '../components/Toast';
 import { getReferral } from '../lib/solana';
 import { getReferrals } from '../lib/storage';
 
+const MOCK_REFERRALS = {
+  'AFL-REF-001': {
+    referralId: 'AFL-REF-001',
+    doctorWallet: 'Dtvs7mD3mQz5KfD9J9mQxC6gK2X7mD3bq8TjQ7mD3mQz',
+    patientWallet: 'AFL-2045',
+    fromFacility: 'Nairobi West Hospital',
+    toFacility: 'Aga Khan Hospital',
+    toFacilityWallet: 'HN7cABqLq46Es1jh92dQQisAi5YqpGj1RRdbzmH2dgHY',
+    notes: 'Chronic cough and night sweats. Needs specialist review.',
+    urgency: 'medium',
+    timestamp: new Date('2026-05-10T05:45:00Z').getTime(),
+    status: 'pending',
+    app: 'afyalink',
+  },
+};
+
 function truncate(addr) {
   if (!addr || addr.length < 10) return addr || '';
   return `${addr.slice(0, 4)}...${addr.slice(-4)}`;
@@ -25,7 +41,7 @@ export default function Verify() {
 
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null); // { valid: boolean, referral?: Referral, paymentStatus?: string, paymentTx?: string }
+  const [result, setResult] = useState(null); // { valid: boolean, referral?: Referral, paymentStatus?: string, paymentTx?: string, isMock?: boolean }
 
   const handleVerify = async () => {
     const sig = input.trim();
@@ -36,6 +52,20 @@ export default function Verify() {
 
     setLoading(true);
     setResult(null);
+
+    const mock = MOCK_REFERRALS[sig];
+    if (mock) {
+      setResult({
+        valid: true,
+        referral: mock,
+        paymentStatus: mock.status,
+        paymentTx: mock.paymentTx,
+        isMock: true,
+      });
+      addToast('Referral verified (demo)', 'success');
+      setLoading(false);
+      return;
+    }
 
     try {
       const referral = await getReferral(connection, sig);
@@ -143,7 +173,11 @@ export default function Verify() {
             <div className="flex items-center gap-2">
               <UrgencyBadge urgency={result.referral.urgency} />
               <StatusBadge status={result.paymentStatus || 'pending'} />
-              <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide bg-emerald-100 text-emerald-800">Verified on Solana</span>
+              {result.isMock ? (
+                <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide bg-amber-100 text-amber-800">Verified (demo)</span>
+              ) : (
+                <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide bg-emerald-100 text-emerald-800">Verified on Solana</span>
+              )}
             </div>
 
             {/* Doctor */}

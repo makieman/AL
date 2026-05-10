@@ -1,15 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
+import { QRCodeSVG } from 'qrcode.react';
 import ReferralCard from '../components/ReferralCard';
 import { useToast } from '../components/Toast';
-import { getReferrals } from '../lib/storage';
+import { generatePatientId, getPatientByWallet, getReferrals, savePatient } from '../lib/storage';
 import { reseedDemoData } from '../lib/demo';
 
 export default function Patient() {
   const { publicKey, connected } = useWallet();
   const { addToast } = useToast();
   const [referrals, setReferrals] = useState([]);
+  const [patientProfile, setPatientProfile] = useState(null);
+  const [profileForm, setProfileForm] = useState({ name: '', phone: '', nhif: '' });
+  const [savingProfile, setSavingProfile] = useState(false);
 
   const loadReferrals = useCallback(() => {
     if (!publicKey) return;
@@ -21,6 +25,51 @@ export default function Patient() {
   useEffect(() => {
     loadReferrals();
   }, [loadReferrals]);
+
+  const loadProfile = useCallback(() => {
+    if (!publicKey) {
+      setPatientProfile(null);
+      return;
+    }
+    const profile = getPatientByWallet(publicKey.toBase58());
+    setPatientProfile(profile);
+    if (!profile) {
+      setProfileForm({ name: '', phone: '', nhif: '' });
+    }
+  }, [publicKey]);
+
+  useEffect(() => {
+    loadProfile();
+  }, [loadProfile]);
+
+  const handleProfileChange = (e) => {
+    setProfileForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
+  };
+
+  const handleRegister = (e) => {
+    e.preventDefault();
+    if (!publicKey) return;
+
+    if (!profileForm.name.trim() || !profileForm.phone.trim() || !profileForm.nhif.trim()) {
+      addToast('Please fill in all details', 'error');
+      return;
+    }
+
+    setSavingProfile(true);
+    const patient = {
+      patientId: generatePatientId(),
+      wallet: publicKey.toBase58(),
+      name: profileForm.name.trim(),
+      phone: profileForm.phone.trim(),
+      nhif: profileForm.nhif.trim(),
+      createdAt: Date.now(),
+    };
+
+    savePatient(patient);
+    setPatientProfile(patient);
+    setSavingProfile(false);
+    addToast('Patient ID created', 'success');
+  };
 
   const handleLoadDemo = () => {
     if (!publicKey) return;
@@ -50,6 +99,65 @@ export default function Patient() {
           </div>
           <h2 className="text-lg font-semibold text-gray-700 mb-1">Connect Wallet</h2>
           <p className="text-sm text-gray-500">Connect your wallet to view your referrals</p>
+        </div>
+      )}
+
+      {/* Registration */}
+      {connected && !patientProfile && (
+        <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm mb-6">
+          <h2 className="text-lg font-semibold text-gray-900">Create your Patient ID</h2>
+          <p className="text-xs text-gray-500 mt-1">Add your details once to get your AFL ID</p>
+          <form onSubmit={handleRegister} className="mt-4 space-y-3">
+            <input
+              name="name"
+              value={profileForm.name}
+              onChange={handleProfileChange}
+              placeholder="Full name"
+              className="w-full px-4 py-3 rounded-xl border border-gray-300 text-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition"
+              disabled={savingProfile}
+            />
+            <input
+              name="phone"
+              value={profileForm.phone}
+              onChange={handleProfileChange}
+              placeholder="Phone number"
+              className="w-full px-4 py-3 rounded-xl border border-gray-300 text-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition"
+              disabled={savingProfile}
+            />
+            <input
+              name="nhif"
+              value={profileForm.nhif}
+              onChange={handleProfileChange}
+              placeholder="NHIF number"
+              className="w-full px-4 py-3 rounded-xl border border-gray-300 text-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition"
+              disabled={savingProfile}
+            />
+            <button
+              type="submit"
+              disabled={savingProfile}
+              className="w-full py-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-sm font-semibold transition-colors disabled:opacity-50 min-h-[48px]"
+            >
+              {savingProfile ? 'Creating...' : 'Get Patient ID'}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* Patient ID card */}
+      {connected && patientProfile && (
+        <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm mb-6">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Your Patient ID</h2>
+              <p className="text-xs text-gray-500 mt-1">Share this AFL ID with your doctor</p>
+              <p className="mt-2 text-sm font-medium text-gray-900">{patientProfile.name}</p>
+              <p className="text-sm font-mono text-teal-700">{patientProfile.patientId}</p>
+            </div>
+            <div className="bg-gray-50 rounded-xl p-2">
+              <QRCodeSVG value={patientProfile.patientId} size={88} />
+            </div>
+          </div>
+          <p className="text-xs text-gray-400 mt-3">Show this QR code at the doctor desk</p>
         </div>
       )}
 
